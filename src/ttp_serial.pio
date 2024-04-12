@@ -1,8 +1,4 @@
 .program ttp_serial_8
-.define CLK0 0
-.define CLK1 1
-.define BITS 7
-    set pins, CLK0
 .wrap_target
     set y, 3
 tout_y:
@@ -11,20 +7,17 @@ tout_x:
     nop [31]
     jmp x-- tout_x
     jmp y-- tout_y
-    set x, BITS
+    set x, 7
 bitloop:
-    set pins, CLK1 [3]
-    set pins, CLK0 [1]
+    set pins, 1 [3]
+    set pins, 0 [1]
     in pins, 1
     jmp x-- bitloop
     push
+    irq 0
 .wrap
 
 .program ttp_serial_8inv
-.define CLK0 1
-.define CLK1 0
-.define BITS 7
-    set pins, CLK0
 .wrap_target
     set y, 3
 tout_y:
@@ -33,20 +26,17 @@ tout_x:
     nop [31]
     jmp x-- tout_x
     jmp y-- tout_y
-    set x, BITS
+    set x, 7
 bitloop:
-    set pins, CLK1 [3]
-    set pins, CLK0 [1]
+    set pins, 0 [3]
+    set pins, 1 [1]
     in pins, 1
     jmp x-- bitloop
     push
+    irq 0
 .wrap
 
 .program ttp_serial_16
-.define CLK0 0
-.define CLK1 1
-.define BITS 15
-    set pins, CLK0
 .wrap_target
     set y, 3
 tout_y:
@@ -55,20 +45,17 @@ tout_x:
     nop [31]
     jmp x-- tout_x
     jmp y-- tout_y
-    set x, BITS
+    set x, 15
 bitloop:
-    set pins, CLK1 [3]
-    set pins, CLK0 [1]
+    set pins, 1 [3]
+    set pins, 0 [1]
     in pins, 1
     jmp x-- bitloop
     push
+    irq 0
 .wrap
 
 .program ttp_serial_16inv
-.define CLK0 1
-.define CLK1 0
-.define BITS 15
-    set pins, CLK0
 .wrap_target
     set y, 3
 tout_y:
@@ -77,11 +64,12 @@ tout_x:
     nop [31]
     jmp x-- tout_x
     jmp y-- tout_y
-    set x, BITS
+    set x, 15
 bitloop:
-    set pins, CLK1 [3]
-    set pins, CLK0 [1]
+    set pins, 0 [3]
+    set pins, 1 [1]
     in pins, 1
     jmp x-- bitloop
     push
+    irq 0
 .wrap

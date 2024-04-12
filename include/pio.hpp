@@ -13,13 +13,6 @@ static PIO pio_get_available(const pio_program_t * program) {
     return NULL;
 };
 
-static uint pio_sm_get_availabe(PIO pio) {
-    for (uint i = 0; i < NUM_PIO_STATE_MACHINES; i++) {
-        if (!pio_sm_is_claimed(pio, i)) return i;
-    }
-    return -1;
-};
-
 static uint32_t pio_set_frequency(PIO pio, uint sm, uint32_t frequency) {
     if (frequency == 0) frequency = clock_get_hz(clk_sys);
 

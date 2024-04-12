@@ -15,4 +15,4 @@ target_sources(${NAME} INTERFACE
 target_include_directories(${NAME} INTERFACE ${CMAKE_CURRENT_LIST_DIR}/include)
 
 # Pull in pico libraries that we need
-target_link_libraries(${NAME} INTERFACE pico_stdlib hardware_gpio hardware_pio hardware_clocks)
+target_link_libraries(${NAME} INTERFACE pico_stdlib hardware_gpio hardware_pio hardware_clocks hardware_irq)

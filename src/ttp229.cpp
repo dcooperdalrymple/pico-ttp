@@ -2,23 +2,18 @@
 #include "pio.hpp"
 #include "hardware/irq.h"
 
-// NOTE: Max of 4 instances is arbitrary
-static uint8_t ttp229_count = 0;
-static TTP229 * ttp229_instances[4] = { NULL, NULL, NULL, NULL };
+static TTP229 * ttp229_instances[NUM_PIOS] = { NULL, NULL };
 
 static void ttp229_interrupt() {
     uint8_t i;
+
     if (pio0_hw->irq & 1) {
-        for (i = 0; i < ttp229_count; i++) {
-            if (ttp229_instances[i] && !ttp229_instances[i]->get_pio_index()) ttp229_instances[i]->update();
-        }
+        if (ttp229_instances[0]) ttp229_instances[0]->update();
         pio0_hw->irq = 3; // Clear interrupt
     }
 
     if (pio1_hw->irq & 1) {
-        for (i = 0; i < ttp229_count; i++) {
-            if (ttp229_instances[i] && ttp229_instances[i]->get_pio_index()) ttp229_instances[i]->update();
-        }
+        if (ttp229_instances[1]) ttp229_instances[1]->update();
         pio1_hw->irq = 3; // Clear interrupt
     }
 };
@@ -32,10 +27,8 @@ TTP229::TTP229(uint sdo, uint scl) {
 };
 
 void TTP229::init(uint sdo, uint scl, TTPMode mode, bool invert_clk) {
-    if (ttp229_count < 4) ttp229_instances[ttp229_count++] = this;
-
     this->bits = mode == TTPMode::MODE_16BIT ? 16 : 8;
-    this->data = 0;
+    this->previous = 0;
 
     this->sdo = sdo;
     this->scl = scl;
@@ -64,16 +57,6 @@ void TTP229::init(uint sdo, uint scl, TTPMode mode, bool invert_clk) {
     gpio_pull_up(this->sdo);
     sm_config_set_in_shift(&this->cfg, true, false, this->bits);
 
-    // Setup Interrupt
-    // TODO: Allow multiple interrupts
-    if (!this->pio_index) {
-        irq_set_exclusive_handler(PIO0_IRQ_0, &ttp229_interrupt);
-        pio0_hw->inte0 = PIO_IRQ0_INTE_SM0_BITS;
-    } else {
-        irq_set_exclusive_handler(PIO1_IRQ_0, &ttp229_interrupt);
-        pio1_hw->inte0 = PIO_IRQ0_INTE_SM0_BITS;
-    }
-
     // Setup the State Machine
     pio_sm_init(this->pio, this->sm, this->offset, &this->cfg); // 16 = program counter after jump table
     pio_set_frequency(this->pio, this->sm, 2000000); // 2MHz, cycle = 0.5us
@@ -95,14 +78,31 @@ TTP229::~TTP229() {
     gpio_deinit(this->scl);
 };
 
-void TTP229::enable() {
+void TTP229::enable(bool interrupt) {
     this->disable();
-    irq_set_enabled(!this->pio_index ? PIO0_IRQ_0 : PIO0_IRQ_0, true);
+
+    if (interrupt) {
+        ttp229_instances[this->pio_index] = this;
+
+        if (!this->pio_index) {
+            irq_set_exclusive_handler(PIO0_IRQ_0, &ttp229_interrupt);
+            pio0_hw->inte0 = PIO_IRQ0_INTE_SM0_BITS;
+        } else {
+            irq_set_exclusive_handler(PIO1_IRQ_0, &ttp229_interrupt);
+            pio1_hw->inte0 = PIO_IRQ0_INTE_SM0_BITS;
+        }
+        irq_set_enabled(!this->pio_index ? PIO0_IRQ_0 : PIO1_IRQ_0, true);
+    }
+
     pio_sm_set_enabled(this->pio, this->sm, true);
 };
 
+void TTP229::enable() {
+    this->enable(false);
+};
+
 void TTP229::disable() {
-    irq_set_enabled(!this->pio_index ? PIO0_IRQ_0 : PIO0_IRQ_0, false);
+    irq_set_enabled(!this->pio_index ? PIO0_IRQ_0 : PIO1_IRQ_0, false);
     pio_sm_set_enabled(this->pio, this->sm, false);
     pio_sm_clear_fifos(this->pio, this->sm);
     pio_sm_restart(this->pio, this->sm);
@@ -116,21 +116,50 @@ void TTP229::clear_callback() {
     this->cb = NULL;
 };
 
-void TTP229::update() {
-    if (pio_sm_is_rx_fifo_empty(this->pio, this->sm)) return;
-    uint32_t word = pio_sm_get(this->pio, this->sm) >> (32 - this->bits);
-    if (this->cb) {
-        uint32_t mask;
-        for (uint8_t i = 0; i < this->bits; i++) {
-            mask = (1 << i);
-            if ((this->data & mask) == (word & mask)) continue;
-            this->cb(i, (word & mask) ? TTPState::PRESS : TTPState::RELEASE);
-        }
-    }
-    this->data = word;
-    pio_sm_clear_fifos(this->pio, this->sm);
+uint32_t TTP229::get() {
+    if (pio_sm_is_rx_fifo_empty(this->pio, this->sm)) return -1;
+    return pio_sm_get(this->pio, this->sm) >> (32 - this->bits);
 };
 
-uint TTP229::get_pio_index() {
-    return this->pio_index;
+uint32_t TTP229::get_blocking() {
+    return pio_sm_get_blocking(this->pio, this->sm) >> (32 - this->bits);
+};
+
+bool TTP229::value(uint8_t input, uint32_t data) {
+    if (input > this->bits) return false;
+    return data & (1 << input);
+};
+
+bool TTP229::value(uint8_t input) {
+    pio_sm_clear_fifos(this->pio, this->sm);
+    return this->value(input, this->get_blocking());
+};
+
+TTPState TTP229::state(uint8_t input, uint32_t current, uint32_t previous) {
+    if (input > this->bits) return TTPState::ERROR;
+    uint32_t mask = (1 << input);
+    if ((previous & mask) == (current & mask)) return TTPState::NONE;
+    return current & mask ? TTPState::PRESS : TTPState::RELEASE;
+};
+
+TTPState TTP229::state(uint8_t input) {
+    uint32_t current = this->get_blocking();
+    TTPState state = this->state(input, current, this->previous);
+    this->previous = current;
+    pio_sm_clear_fifos(this->pio, this->sm);
+    return state;
+};
+
+void TTP229::update() {
+    uint32_t current = this->get_blocking();
+    if (this->cb) {
+        TTPState state;
+        for (uint8_t i = 0; i < this->bits; i++) {
+            state = this->state(i, current, this->previous);
+            if (state == TTPState::ERROR || state == TTPState::NONE) continue;
+            this->cb(i, state == TTPState::PRESS);
+        }
+    }
+    this->previous = current;
+    pio_sm_clear_fifos(this->pio, this->sm);
 };
